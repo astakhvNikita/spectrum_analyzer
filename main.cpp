@@ -3,17 +3,19 @@
 #include <SFML/Audio/SoundBufferRecorder.hpp>
 #include <SFML/Graphics.hpp>
 
-#include <fftw3.h>
-
 #include "dsp.h"
 
-#define FFT_LENGTH      (256)
-#define SMA_FILT_ORDER  (15)
+#define LOG_SCALE
+
+#define FFT_LENGTH          (1024)
+#define FFT_LENGTH_LOG      (10)
+#define SMA_FILT_ORDER_M    (1)
+#define SMA_FILT_ORDER      (10 * SMA_FILT_ORDER_M)
+#define SMA_FILT_PEAK_ORDER (38 * SMA_FILT_ORDER_M)
 
 sf::Mutex mutex;
 
-std::vector<int16_t> fft(256);
-std::vector<std::vector<uint16_t>> filtHistory(256);
+std::vector<std::complex<double>> fftOut;
 
 class CustomRecorder : public sf::SoundRecorder
 {
@@ -46,18 +48,8 @@ public:
                 fftIn[i].imag(0.0);
             }
 
-            dsp::DSP::fft(fftIn, fftOut);
             mutex.lock();
-            for (int i = 0; i < sampleBuf.size(); i++)
-            {
-                fft[i] = 20 * std::log10(std::abs(fftOut[i]) /
-                    (sampleBuf.size() / 2) / INT16_MAX) + 60;
-                if (fft[i] < 0)
-                    fft[i] = 0;
-                fft[i] *= 4;
-                fft[i] = dsp::DSP::sma_filt(fft[i], SMA_FILT_ORDER,
-                    filtHistory[i]);
-            }
+            dsp::DSP::fft(fftIn, fftOut);
             mutex.unlock();
             sampleBuf.clear();
 
@@ -71,20 +63,29 @@ private:
     std::vector<int16_t> sampleBuf;
 
     std::vector<std::complex<double>> fftIn;
-    std::vector<std::complex<double>> fftOut;
 };
 
 int main()
 {
+#ifdef LOG_SCALE
+    sf::RenderWindow window(sf::VideoMode(FFT_LENGTH_LOG * 32, 240),
+        "Spectrum Analyzer");
+#else
     sf::RenderWindow window(sf::VideoMode(FFT_LENGTH * 2, 240),
         "Spectrum Analyzer");
-    sf::RectangleShape line;
+#endif
+    sf::RectangleShape mean, peak;
+    std::vector<int16_t> fft(FFT_LENGTH);
+    std::vector<int16_t> fftPeak(FFT_LENGTH);
+    std::vector<std::vector<uint16_t>> fftHistory(FFT_LENGTH);
+    std::vector<std::vector<uint16_t>> fftPeakHistory(FFT_LENGTH);
 
     sf::Vector2u windowSize = window.getSize();
     window.setFramerateLimit(60);
     window.setVerticalSyncEnabled(true);
 
-    line.setFillColor(sf::Color::Green);
+    mean.setFillColor(sf::Color::Green);
+    peak.setFillColor(sf::Color::Red);
 
     CustomRecorder recorder;
     if (recorder.isAvailable())
@@ -97,8 +98,10 @@ int main()
         recorder.start();
     }
 
-    for (int i = 0; i < filtHistory.size(); i++)
-        filtHistory[i].resize(SMA_FILT_ORDER + 1);
+    for (int i = 0; i < fftHistory.size(); i++)
+        fftHistory[i].resize(SMA_FILT_ORDER + 1);
+    for (int i = 0; i < fftPeakHistory.size(); i++)
+        fftPeakHistory[i].resize(SMA_FILT_PEAK_ORDER + 1);
 
     while (window.isOpen())
     {
@@ -112,14 +115,54 @@ int main()
         window.clear();
 
         mutex.lock();
-        for (int i = 0; i < fft.size() / 2; i++)
+        if (fftOut.size() == FFT_LENGTH)
         {
-            line.setPosition(sf::Vector2f(i * (windowSize.x / (FFT_LENGTH / 2)),
-                windowSize.y - fft[i]));
-            line.setSize(sf::Vector2f(windowSize.x / (FFT_LENGTH / 2) - 1, fft[i]));
-            window.draw(line);
+            for (int i = 0; i < FFT_LENGTH; i++)
+            {
+                int16_t point = 20 * std::log10(std::abs(fftOut[i]) /
+                    (FFT_LENGTH / 2) / INT16_MAX) + 60;
+                if (point < 0)
+                    point = 0;
+                point *= 4;
+                fft[i] = dsp::DSP::sma_filt(point, SMA_FILT_ORDER,
+                    fftHistory[i]);
+                fftPeak[i] = dsp::DSP::sma_filt(point, SMA_FILT_PEAK_ORDER,
+                    fftPeakHistory[i], true);
+            }
         }
         mutex.unlock();
+#ifdef LOG_SCALE
+        for (int i = 1, x = 0; i <= fft.size() / 2; i = i * 2, x++)
+        {
+            if (i == fft.size() / 2)
+                i = 20000 / ((recorder.getSampleRate() / 2) / (fft.size() / 2));
+            peak.setPosition(sf::Vector2f(x * (windowSize.x / FFT_LENGTH_LOG),
+                windowSize.y - fftPeak[i]));
+            peak.setSize(sf::Vector2f(windowSize.x / FFT_LENGTH_LOG - 1, 10));
+            window.draw(peak);
+
+            mean.setPosition(sf::Vector2f(x * (windowSize.x / FFT_LENGTH_LOG),
+                windowSize.y - fft[i]));
+            mean.setSize(sf::Vector2f(windowSize.x / FFT_LENGTH_LOG - 1,
+                fft[i]));
+            window.draw(mean);
+        }
+#else
+        for (int i = 0; i < fft.size() / 2; i++)
+        {
+            peak.setPosition(sf::Vector2f(i * (windowSize.x / (FFT_LENGTH / 2)),
+                windowSize.y - fftPeak[i]));
+            peak.setSize(sf::Vector2f(windowSize.x / (FFT_LENGTH / 2) - 1,
+                windowSize.x / (FFT_LENGTH / 2) - 1));
+            window.draw(peak);
+
+            mean.setPosition(sf::Vector2f(i * (windowSize.x / (FFT_LENGTH / 2)),
+                windowSize.y - fft[i]));
+            mean.setSize(sf::Vector2f(windowSize.x / (FFT_LENGTH / 2) - 1,
+                fft[i]));
+            window.draw(mean);
+        }
+#endif
 
         window.display();
 
