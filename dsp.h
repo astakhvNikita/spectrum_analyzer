@@ -22,7 +22,7 @@ namespace dsp
             std::vector<std::complex<double>> &out) { return 0; };
 
         static uint16_t sma_filt(uint16_t in, int order,
-            std::vector<uint16_t>& history);
+            std::vector<uint16_t>& history, bool peak = false);
 
     private:
         static std::vector<std::complex<double>> _fft(

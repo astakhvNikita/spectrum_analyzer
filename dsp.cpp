@@ -40,10 +40,18 @@ namespace dsp
         return in.size();
     }
 
-    uint16_t DSP::sma_filt(uint16_t in, int order, std::vector<uint16_t>& history)
+    uint16_t DSP::sma_filt(uint16_t in, int order, std::vector<uint16_t>& history, bool peak)
     {
         int i;
         uint32_t sum;
+
+        if (peak && (in > history[order]))
+        {
+            for (i = 0; i <= order; i++)
+                history[i] = in;
+
+            return in;
+        }
 
         for (i = order - 1; i > 0; i--)
             history[i] = history[i - 1];
