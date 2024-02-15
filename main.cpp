@@ -5,10 +5,16 @@
 
 #include "dsp.h"
 
-#define LOG_SCALE
+//#define LOG_SCALE
 
+#ifdef LOG_SCALE
 #define FFT_LENGTH          (1024)
+#else
+#define FFT_LENGTH          (512)
+#endif
+
 #define FFT_LENGTH_LOG      (10)
+
 #define SMA_FILT_ORDER_M    (1)
 #define SMA_FILT_ORDER      (10 * SMA_FILT_ORDER_M)
 #define SMA_FILT_PEAK_ORDER (38 * SMA_FILT_ORDER_M)
@@ -109,7 +115,10 @@ int main()
         while (window.pollEvent(event))
         {
             if (event.type == sf::Event::Closed)
+            {
+                recorder.stop();
                 window.close();
+            }
         }
 
         window.clear();
